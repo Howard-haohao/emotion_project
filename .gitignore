@@ -1,0 +1,21 @@
+# Python 暫存檔
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 虛擬環境
+venv/
+env/
+ENV/
+
+# 環境變數與機密資訊
+.env
+
+# Django 相關
+*.log
+db.sqlite3
+db.sqlite3-journal
+
+# IDE 暫存檔
+.vscode/
+.idea/
