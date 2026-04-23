@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <title>員工管理</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; padding: 2rem; color: #334155; background: #fff; }
+        
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; border-bottom: 2px solid #f1f5f9; padding-bottom: 10px; }
+        h2 { color: #2563eb; margin: 0; }
+        
+        table { width: 100%; border-collapse: collapse; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+        th, td { padding: 14px 20px; text-align: left; border-bottom: 1px solid #f1f5f9; }
+        th { background: #f8fafc; color: #64748b; font-weight: 600; text-transform: uppercase; font-size: 0.85rem; }
+        tr:hover { background: #f8fafc; }
+        
+        .badge { padding: 4px 10px; border-radius: 99px; font-size: 0.75rem; font-weight: 600; display: inline-block; }
+        .badge.boss { background: #dbeafe; color: #1e40af; }
+        .badge.staff { background: #f1f5f9; color: #475569; }
+        
+        .btn { padding: 8px 16px; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; transition: 0.2s; }
+        .btn-add { background: #16a34a; color: white; }
+        .btn-add:hover { background: #15803d; }
+        .btn-del { background: #ef4444; color: white; padding: 6px 12px; font-size: 0.85rem; }
+        .btn-del:hover { background: #dc2626; }
+
+        /* 彈跳視窗樣式 */
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; }
+        .modal.active { display: flex; }
+        .modal-content { background: white; padding: 2rem; border-radius: 16px; width: 350px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); }
+        .form-group { margin-bottom: 1rem; }
+        .form-group label { display: block; margin-bottom: 5px; font-weight: 600; color: #475569; }
+        .form-group input { width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; box-sizing: border-box; }
+        .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+        .btn-cancel { background: #e2e8f0; color: #475569; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h2>員工帳號管理</h2>
+        <button class="btn btn-add" onclick="openModal()">+ 新增員工</button>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>帳號</th>
+                <th>信箱</th>
+                <th>加入時間</th>
+                <th>身分</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for u in users %}
+            <tr id="row-{{ u.id }}">
+                <td style="font-weight:600;">{{ u.username }}</td>
+                <td>{{ u.email|default:"--" }}</td>
+                <td>{{ u.date_joined|date:"Y/m/d" }}</td>
+                <td>
+                    {% if u.is_superuser %}
+                        <span class="badge boss">主管</span>
+                    {% else %}
+                        <span class="badge staff">員工</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if user.id != u.id %}
+                        <button class="btn btn-del" onclick="deleteUser('{{ u.id }}', '{{ u.username }}')">刪除</button>
+                    {% else %}
+                        <span style="color:#ccc;">(本人)</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="5" style="text-align:center; padding:2rem; color:#94a3b8;">目前沒有其他員工</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div id="addModal" class="modal">
+        <div class="modal-content">
+            <h3 style="margin-top:0;">新增員工</h3>
+            <div class="form-group">
+                <label>帳號</label>
+                <input type="text" id="new_username" placeholder="請輸入帳號">
+            </div>
+            <div class="form-group">
+                <label>密碼</label>
+                <input type="password" id="new_password" placeholder="請輸入密碼">
+            </div>
+            <div class="form-group">
+                <label>Email (選填)</label>
+                <input type="email" id="new_email" placeholder="name@example.com">
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-cancel" onclick="closeModal()">取消</button>
+                <button class="btn btn-add" onclick="submitNewUser()">建立</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 刪除員工
+        function deleteUser(id, name) {
+            if(!confirm(`確定要刪除員工「${name}」嗎？此動作無法復原！`)) return;
+            const csrftoken = getCookie('csrftoken');
+            $.ajax({
+                url: `/delete_employee/${id}/`,
+                type: 'POST',
+                headers: {'X-CSRFToken': csrftoken},
+                success: function(res) {
+                    if(res.status === 'ok') $(`#row-${id}`).fadeOut();
+                    else alert('刪除失敗: ' + res.message);
+                }
+            });
+        }
+
+        // 新增員工邏輯
+        function openModal() { $('#addModal').addClass('active'); }
+        function closeModal() { $('#addModal').removeClass('active'); }
+
+        function submitNewUser() {
+            const u = $('#new_username').val();
+            const p = $('#new_password').val();
+            const e = $('#new_email').val();
+            const csrftoken = getCookie('csrftoken');
+
+            if(!u || !p) return alert("帳號與密碼為必填！");
+
+            $.ajax({
+                url: '/add_employee/',
+                type: 'POST',
+                headers: {'X-CSRFToken': csrftoken},
+                contentType: 'application/json',
+                data: JSON.stringify({ username: u, password: p, email: e }),
+                success: function(res) {
+                    if(res.status === 'ok') {
+                        alert('新增成功！');
+                        location.reload(); // 重新整理頁面顯示新員工
+                    } else {
+                        alert('新增失敗: ' + res.message);
+                    }
+                }
+            });
+        }
+
+        function getCookie(name) {
+            let cookieValue = null;
+            if (document.cookie && document.cookie !== '') {
+                const cookies = document.cookie.split(';');
+                for (let i = 0; i < cookies.length; i++) {
+                    const cookie = cookies[i].trim();
+                    if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                        break;
+                    }
+                }
+            }
+            return cookieValue;
+        }
+    </script>
+
+</body>
+</html>

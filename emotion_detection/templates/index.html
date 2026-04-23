@@ -1,0 +1,623 @@
+﻿<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>顧客情緒辨識暨滿意度管理</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/face_detection.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    
+    <style>
+        :root {
+            --primary: #2563eb; --primary-light: #eff6ff;
+            --danger: #dc2626; --danger-light: #fef2f2;
+            --success: #16a34a; --success-light: #f0fdf4;
+            --warning: #ca8a04;
+            --bg: #f8fafc; --surface: #ffffff;
+            --text-main: #334155; --text-sub: #64748b;
+            --nav-width: 260px;
+            
+            /* 新增：情緒色板 */
+            --emo-happy: #16a34a; --emo-neutral: #64748b; --emo-anger: #dc2626; 
+            --emo-sad: #2563eb; --emo-surprise: #ca8a04; --emo-disgust: #be123c; 
+            --emo-fear: #f97316;
+        }
+
+        body { 
+            margin: 0; font-family: 'Inter', sans-serif; background-color: var(--bg); color: var(--text-main); 
+            height: 100vh; display: flex; overflow: hidden;
+        }
+
+        /* --- 側邊欄 (Sidebar) --- */
+        .sidebar {
+            width: var(--nav-width); background: var(--surface); border-right: 1px solid #e2e8f0;
+            display: flex; flex-direction: column; padding: 1.5rem; gap: 2rem; flex-shrink: 0;
+        }
+        .brand { font-size: 1.2rem; font-weight: 700; color: var(--primary); display: flex; align-items: center; gap: 10px; }
+        .nav-menu { display: flex; flex-direction: column; gap: 0.5rem; flex: 1; }
+        
+        .nav-item {
+            text-decoration: none; color: var(--text-sub); padding: 12px 16px; border-radius: 12px;
+            font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; gap: 12px;
+            transition: all 0.2s; cursor: pointer; user-select: none;
+        }
+        .nav-item:hover { background-color: #f1f5f9; color: var(--text-main); }
+        .nav-item.active { background-color: var(--primary-light); color: var(--primary); }
+
+        /* 登出按鈕 */
+        .logout-item { margin-top: auto; color: var(--danger); }
+        .logout-item:hover { background-color: var(--danger-light); }
+
+        /* --- 主內容區 (Main Content) --- */
+        .main-content {
+            flex: 1; padding: 2rem; overflow: hidden; display: flex; flex-direction: column; position: relative;
+        }
+        .view-section { display: none; width: 100%; height: 100%; animation: fadeIn 0.3s ease; }
+        .view-section.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* --- View 1: 即時偵測 --- */
+        .monitor-layout { display: flex; flex-direction: column; gap: 2rem; height: 100%; overflow-y: auto; }
+        .header-bar { display: flex; justify-content: space-between; align-items: center; }
+        .page-title { font-size: 1.5rem; font-weight: 700; color: var(--text-main); }
+        .status-badge { padding: 6px 12px; border-radius: 99px; font-size: 0.85rem; font-weight: 600; background: #e2e8f0; color: var(--text-sub); }
+        .status-badge.ready { background: #dcfce7; color: #166534; }
+
+        .dashboard-grid { display: grid; grid-template-columns: 400px 1fr; gap: 2rem; align-items: start; max-width: 1400px; }
+        
+        /* 影像卡片 */
+        .video-card { background: var(--surface); padding: 1rem; border-radius: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); display: flex; flex-direction: column; gap: 1rem; }
+        .video-wrapper { position: relative; width: 100%; border-radius: 16px; overflow: hidden; background: #000; aspect-ratio: 4/3; }
+        video, canvas { width: 100%; height: 100%; object-fit: cover; position: absolute; top: 0; left: 0; transform: scaleX(-1); }
+        
+        #countdown { 
+            position: absolute; top: 12px; right: 12px; background: rgba(0,0,0,0.6); color: white; padding: 4px 10px; 
+            border-radius: 6px; font-size: 0.8rem; backdrop-filter: blur(4px); 
+        }
+        #face-id-label {
+            position: absolute; bottom: 12px; left: 12px; background: rgba(0,0,0,0.6); color: white; padding: 4px 10px; 
+            border-radius: 6px; font-size: 0.8rem; backdrop-filter: blur(4px); display: none;
+        }
+
+        /* 操作按鈕 */
+        .btn-action { 
+            width: 100%; padding: 16px; border: none; border-radius: 12px; font-size: 1rem; font-weight: 700; 
+            cursor: pointer; transition: all 0.2s; display: flex; justify-content: center; align-items: center; 
+            gap: 8px; background-color: var(--primary); color: white; 
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2); 
+        }
+        .btn-action:disabled { opacity: 0.6; cursor: not-allowed; background-color: #cbd5e1; box-shadow: none; }
+        .btn-action.stop { 
+            background-color: white; color: var(--danger); border: 2px solid var(--danger-light); 
+            box-shadow: 0 4px 12px rgba(220, 38, 38, 0.1);
+        }
+        .btn-action.loading { background-color: #94a3b8; color: white; }
+
+        /* 數據卡片 */
+        .data-panel { display: flex; flex-direction: column; gap: 1.5rem; }
+        .score-card { background: var(--surface); padding: 1.5rem; border-radius: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); display: flex; flex-direction: column; gap: 1.5rem; }
+        
+        /* 新版情緒顯示區塊 Layout */
+        .status-row { display: flex; gap: 2rem; align-items: flex-end; padding-bottom: 1.5rem; border-bottom: 1px dashed #e2e8f0; }
+        .status-item { display: flex; flex-direction: column; gap: 5px; }
+        .status-label { font-size: 0.9rem; color: var(--text-sub); font-weight: 600; }
+        
+        /* 分數顯示 */
+        .score-val { font-size: 3.5rem; font-weight: 800; line-height: 1; color: var(--text-main); letter-spacing: -1px; }
+        .score-val.high { color: var(--success); }
+        .score-val.mid { color: var(--warning); }
+        .score-val.low { color: var(--danger); }
+
+        /* 主情緒顯示 */
+        .dominant-emotion-display { 
+            font-size: 1.8rem; font-weight: 700; display: flex; align-items: center; gap: 10px; 
+            padding: 8px 12px; border-radius: 12px; border: 2px solid transparent; 
+            transition: all 0.3s;
+        }
+        /* 情緒動態邊框色 */
+        .dominant-emotion-display.happy { border-color: var(--emo-happy); color: var(--emo-happy); }
+        .dominant-emotion-display.anger { border-color: var(--emo-anger); color: var(--emo-anger); }
+        .dominant-emotion-display.sadness { border-color: var(--emo-sad); color: var(--emo-sad); }
+        .dominant-emotion-display.neutral { border-color: var(--emo-neutral); color: var(--emo-neutral); }
+        /* 其他情緒... */
+
+
+        /* 微表情標籤 */
+        .au-tag {
+            display: inline-flex; align-items: center; padding: 6px 12px; border-radius: 8px; 
+            background: #f1f5f9; color: #64748b; font-size: 0.9rem; font-weight: 600;
+            margin-right: 8px; margin-bottom: 8px; border: 1px solid #e2e8f0;
+        }
+        /* 藍色系：正向或功能性 (思考/期待) */
+        .au-tag.active { background: #eff6ff; color: #2563eb; border-color: #bfdbfe; }
+        /* 紅色系：高強度危機 (攻擊性憤怒, 生理反胃) */
+        .au-tag.crisis { background: #fef2f2; color: var(--danger); border-color: #fecaca; font-weight: 700; }
+        /* 黃色系：中度阻礙 (懷疑, 困惑, 視力吃力) */
+        .au-tag.warning { background: #fefce8; color: #b45309; border-color: #fde68a; }
+
+        /* 情緒軌跡 */
+        .track-dots { display: flex; gap: 8px; margin-top: 5px; }
+        .dot { 
+            width: 36px; height: 36px; border-radius: 10px; background: #f8fafc; 
+            display: flex; align-items: center; justify-content: center; font-size: 1.2rem; 
+            border: 1px solid #e2e8f0; transition: all 0.2s; position: relative;
+        }
+        .dot.active { 
+            border: 2px solid var(--primary); background: #eff6ff; transform: scale(1.1); 
+            box-shadow: 0 2px 5px rgba(37,99,235,0.15); 
+        }
+
+        /* 建議區塊 */
+        .advice-box { 
+            min-height: 140px; display: flex; flex-direction: column; justify-content: center; 
+            border-left: 4px solid transparent; transition: all 0.3s; padding: 1rem; border-radius: 12px;
+        }
+        .advice-label { font-size: 0.9rem; color: var(--text-sub); font-weight: 600; margin-bottom: 8px; }
+        .advice-text { font-size: 1.15rem; color: var(--text-main); line-height: 1.6; font-weight: 600; }
+        
+        .advice-box.normal { border-left-color: #cbd5e1; }
+        /* 危機提示 */
+        .advice-box.alert { background: #fff8f7; border-left-color: var(--danger); box-shadow: 0 0 10px rgba(220, 38, 38, 0.1); }
+        .advice-box.alert .advice-label { color: var(--danger); }
+        .advice-box.alert .advice-text { color: #7f1d1d; }
+        /* 綠色安全區 */
+        .advice-box.safe { background: #f0fdf4; border-left-color: var(--success); }
+        .advice-box.safe .advice-label { color: var(--success); }
+        /* 處理中 */
+        .advice-box.processing { background: #eff6ff; border-left-color: var(--primary); }
+        .advice-box.processing .advice-label { color: var(--primary); }
+
+        .history-box { margin-top: 1rem; padding-top: 1rem; border-top: 1px dashed #cbd5e1; display: none; }
+        .history-label { font-size: 0.85rem; color: #94a3b8; font-weight: 600; margin-bottom: 6px; }
+        .history-text { font-size: 0.95rem; color: #64748b; font-style: italic; }
+
+        /* --- View 2: 共用 iframe --- */
+        #report-frame { width: 100%; height: 100%; border: none; border-radius: 12px; background: #fff; }
+
+    </style>
+</head>
+<body>
+
+<aside class="sidebar">
+    <div class="brand">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></svg>情緒辨識系統
+    </div>
+    <nav class="nav-menu">
+        <div class="nav-item active" id="nav-monitor" onclick="navigateTo('monitor')">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+            偵測情緒
+        </div>
+        <div class="nav-item" id="nav-report" onclick="navigateTo('report')">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>
+            報表查詢
+        </div>
+        
+        {% if user.is_superuser %}
+            <div class="nav-item" id="nav-admin" onclick="navigateTo('admin')">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                員工管理
+            </div>
+        {% else %}
+            <div class="nav-item" id="nav-profile" onclick="navigateTo('profile')">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                個人設定
+            </div>
+        {% endif %}
+        
+        <a href="/logout/" class="nav-item logout-item">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
+            登出 ({{ user.username }})
+        </a>
+    </nav>
+</aside>
+
+<main class="main-content">
+
+    <div id="view-monitor" class="view-section active">
+        <div class="monitor-layout">
+            <div class="header-bar">
+                <div class="page-title">人臉即時偵測</div>
+                <div id="system-status" class="status-badge">系統初始化...</div>
+            </div>
+
+            <div class="dashboard-grid">
+                <div class="video-card">
+                    <div class="video-wrapper">
+                        <video id="webcam" autoplay playsinline muted></video>
+                        <canvas id="canvas-output"></canvas>
+                        <div id="countdown">待機</div>
+                        <div id="face-id-label">ID: --</div>
+                    </div>
+                    <canvas id="canvas-capture" style="display:none;"></canvas>
+                    <button id="action-btn" class="btn-action" disabled>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                        載入模型
+                    </button>
+                </div>
+
+                <div class="data-panel">
+                    <div class="score-card">
+                        <div class="status-row">
+                            <div class="status-item">
+                                <span class="status-label">滿意度</span>
+                                <div class="score-val" id="score-val">--</div>
+                            </div>
+                            <div class="status-item" style="margin-left:auto; text-align:right;">
+                                <span class="status-label">當前主情緒</span>
+                                <div class="dominant-emotion-display" id="dominant-emotion-box">
+                                    <span style="color:#cbd5e1;">(等待中)</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <div class="status-label" style="margin-bottom:10px;">顧客潛在需求 / 行為訊號</div>
+                            <div id="au-container">
+                                <span class="au-tag">等待偵測...</span>
+                            </div>
+                        </div>
+
+                        <div style="margin-top:1rem;">
+                            <div class="status-label" style="margin-bottom:8px;">歷史情緒軌跡 (舊 → 新)</div>
+                            <div class="track-dots" id="track-box">
+                                <div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="dot active"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="score-card">
+                        <div id="advice-box" class="advice-box normal">
+                            <span id="advice-label" class="advice-label">建議</span>
+                            <div id="advice-text" class="advice-text">請點擊「開始接待」啟動服務。</div>
+                        </div>
+                        <div id="history-section" class="history-box">
+                            <div class="history-label">上一則 AI 建議 ({{ currentDisplayedAdviceSource }})</div>
+                            <div id="prev-advice-text" class="history-text">--</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="view-report" class="view-section" style="height: 100%;">
+        <iframe id="report-frame" src="" frameborder="0"></iframe>
+    </div>
+
+</main>
+
+<script>
+    // --- SPA 路由邏輯 (未變動) ---
+    window.onpopstate = function(event) {
+        if(event.state && event.state.page) showPage(event.state.page, false);
+        else showPage('monitor', false);
+    };
+
+    function navigateTo(page) { showPage(page, true); }
+
+    function showPage(pageId, pushToHistory = false) {
+        $('.nav-item').removeClass('active');
+        $(`#nav-${pageId}`).addClass('active');
+        $('.view-section').removeClass('active');
+
+        if (pageId === 'monitor') {
+            $('#view-monitor').addClass('active');
+        } else {
+            $('#view-report').addClass('active');
+            const iframe = document.getElementById('report-frame');
+            let targetUrl = "";
+            if (pageId === 'report') targetUrl = "/report/";
+            else if (pageId === 'admin') targetUrl = "/manage_employees/";
+            else if (pageId === 'profile') targetUrl = "/profile/";
+            
+            if (iframe.getAttribute('src') !== targetUrl) {
+                iframe.src = targetUrl;
+            }
+        }
+
+        if (pushToHistory) {
+            const newUrl = pageId === 'monitor' ? '/' : `/${pageId}/`;
+            history.pushState({page: pageId}, '', newUrl);
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const path = window.location.pathname;
+        if (path.includes('report')) showPage('report');
+        else if (path.includes('manage_employees')) showPage('admin');
+        else if (path.includes('profile')) showPage('profile');
+        else showPage('monitor');
+    });
+
+    // --- 偵測邏輯 ---
+    const video = document.getElementById('webcam');
+    const canvas = document.getElementById('canvas-output');
+    const captureCanvas = document.getElementById('canvas-capture');
+    const actionBtn = document.getElementById('action-btn');
+    const statusBadge = document.getElementById('system-status');
+    const countdownDiv = document.getElementById('countdown');
+    const faceIdLabel = document.getElementById('face-id-label');
+    
+    const scoreVal = document.getElementById('score-val');
+    const dominantEmotionBox = document.getElementById('dominant-emotion-box');
+    const trackBox = document.getElementById('track-box');
+    const adviceBox = document.getElementById('advice-box');
+    const adviceLabel = document.getElementById('advice-label');
+    const adviceText = document.getElementById('advice-text');
+    const historySec = document.getElementById('history-section');
+    const prevAdviceText = document.getElementById('prev-advice-text');
+
+    let isRunning = false;
+    let isSending = false;
+    let isPolling = false; 
+    let activeId = null;
+    let timer = null;
+    let camera = null;
+    let faceDet = null;
+    let currentDisplayedAdvice = "";
+    let alertTimeout = null; 
+    
+    // 擴充情緒字典 (Emoji + 中文 + 顏色類別)
+    const EMOJI_MAP = {
+        'happiness': { icon: '😄', text: '開心', cls: 'happy' },
+        'sadness':   { icon: '😢', text: '難過', cls: 'sadness' },
+        'anger':     { icon: '😡', text: '生氣', cls: 'anger' },
+        'surprise':  { icon: '😲', text: '驚訝', cls: 'surprise' },
+        'fear':      { icon: '😨', text: '恐懼', cls: 'fear' },
+        'disgust':   { icon: '🤢', text: '厭惡', cls: 'disgust' },
+        'neutral':   { icon: '😐', text: '平靜', cls: 'neutral' }
+    };
+
+    // 定義負面/阻礙/功能性關鍵字
+    const CRISIS_KEYWORDS = ["攻擊性憤怒", "壓抑式盛怒", "生理反胃", "強烈拒絕"];
+    const WARNING_KEYWORDS = ["視力吃力", "沒聽清楚", "困惑", "聽不懂", "懷疑", "價格敏感", "尷尬微笑"];
+
+    function initMonitor() {
+        faceDet = new FaceDetection({locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${f}`});
+        faceDet.setOptions({model: 'short', minDetectionConfidence: 0.5});
+        faceDet.onResults(draw);
+        
+        actionBtn.disabled = false;
+        updateBtnState('idle');
+        statusBadge.innerText = "系統就緒";
+        statusBadge.classList.add('ready');
+        startCam(); 
+    }
+
+    // 繪製人臉邊框
+    function draw(res) {
+        canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+        if(res.detections.length > 0) {
+            for(let d of res.detections) {
+                const b = d.boundingBox;
+                const x = b.xCenter*canvas.width - (b.width*canvas.width)/2;
+                const y = b.yCenter*canvas.height - (b.height*canvas.height)/2;
+                ctx.lineWidth = 4;
+                ctx.strokeStyle = isRunning ? "#ef4444" : "#cbd5e1"; 
+                ctx.strokeRect(x,y,b.width*canvas.width, b.height*canvas.height);
+            }
+        }
+    }
+
+    function startCam() {
+        if(camera) return;
+        camera = new Camera(video, {
+            onFrame: async()=>{ if(faceDet) await faceDet.send({image:video}); },
+            width:640, height:480
+        });
+        camera.start();
+    }
+
+    function send() {
+        if(!isRunning || !activeId || isSending) return;
+        isSending = true; 
+        const ctx = captureCanvas.getContext('2d');
+        captureCanvas.width = video.videoWidth; captureCanvas.height = video.videoHeight;
+        ctx.drawImage(video,0,0);
+        const data = captureCanvas.toDataURL('image/jpeg', 0.9);
+        countdownDiv.innerText = "分析中...";
+        
+        $.post('/detect_emotion/', {image:data, customer_id:activeId})
+            .done(updateUI)
+            .always(() => { isSending = false; });
+    }
+
+    function updateUI(res) {
+        if(!isRunning) return;
+
+        countdownDiv.innerText = "監控中 (3s)";
+        faceIdLabel.innerText = `ID: ${activeId}`;
+        faceIdLabel.style.display = 'block';
+
+        // 1. 滿意度顯示
+        const score = res.intervention_score;
+        if (typeof score === 'number') {
+            scoreVal.innerText = score.toFixed(1);
+            scoreVal.className = "score-val " + (score < 45 ? "low" : (score >= 60 ? "high" : "mid"));
+        } else {
+            scoreVal.innerText = "--";
+            scoreVal.className = "score-val";
+        }
+
+        // 2. 主情緒顯示
+        const domEmo = EMOJI_MAP[res.dominant_emotion] || {icon:'?', text: res.dominant_emotion || "未知", cls: 'neutral'};
+        dominantEmotionBox.className = `dominant-emotion-display ${domEmo.cls}`;
+        dominantEmotionBox.innerHTML = `<span>${domEmo.icon}</span> <span>${domEmo.text}</span>`;
+
+        // 3. 標籤更新 (情境分類)
+        const auContainer = document.getElementById('au-container');
+        if (res.scenario_tags && res.scenario_tags.length > 0) {
+            const limitTags = res.scenario_tags.slice(0, 3); // 限制顯示數量
+            
+            auContainer.innerHTML = limitTags.map(tag => {
+                let cls = "au-tag active"; // 預設為功能性或正向
+                if (CRISIS_KEYWORDS.includes(tag)) {
+                    cls = "au-tag crisis";
+                } else if (WARNING_KEYWORDS.includes(tag)) {
+                    cls = "au-tag warning";
+                }
+                return `<span class="${cls}">${tag}</span>`;
+            }).join('');
+        } else {
+            auContainer.innerHTML = `<span class="au-tag">一般 (${domEmo.text})</span>`;
+        }
+
+        // 4. 歷史軌跡
+        if(res.recent_history) {
+            let html = "";
+            const history = res.recent_history.slice(-4); // 只取最近四筆
+            history.forEach((item, i) => {
+                const cls = i === history.length - 1 ? "active" : "";
+                const emoData = EMOJI_MAP[item.emotion] || {icon:'?'};
+                const dotColorClass = emoData.cls; // 使用情緒顏色
+                html += `<div class="dot ${cls} ${dotColorClass}" title="${item.emotion} (${item.score.toFixed(1)})">${emoData.icon}</div>`;
+            });
+            trackBox.innerHTML = html;
+        }
+
+        // 5. AI 建議更新 (狀態處理)
+        const adviceMsg = res.marketing_text || "💡 系統待機中...";
+
+        if (res.status === 'no_face_kept') {
+             setAdvice("normal", "偵測中斷", "(偵測不到人臉，使用上次結果保持狀態)");
+             return;
+        }
+
+        if (res.is_green_zone && res.dominant_emotion === 'happiness') {
+            setAdvice("safe", "✅ 狀況解除", "顧客滿意度回升，請保持服務品質。");
+        } else if (res.marketing_status === 'processing' || res.marketing_text.includes("分析中")) {
+            setAdvice("processing", "🤖 AI 分析中...", adviceMsg);
+            poll(res.customer_id);
+        } else if (res.is_red_zone) {
+            setAdvice("alert", "⚡ AI 積極介入", adviceMsg, res.marketing_source);
+        } else {
+            setAdvice("normal", "💡 一般建議", adviceMsg, res.marketing_source);
+        }
+    }
+
+    function poll(id) {
+        if(!isRunning || isPolling) return;
+        isPolling = true;
+
+        setTimeout(() => {
+            if(!isRunning) { isPolling = false; return; }
+            $.get('/marketing_status/', {record_id:id}).done(res => {
+                if(res.status==='done') {
+                    // AI 輸出完成，強制更新 UI
+                    setAdvice("alert", "⚡ AI 積極介入", res.marketing_text, res.marketing_source);
+                    isPolling = false;
+                } else if(res.status==='pending') {
+                    isPolling = false; 
+                    poll(id); // 繼續輪詢
+                } else {
+                    isPolling = false;
+                }
+            }).fail(() => { isPolling = false; });
+        }, 2000);
+    }
+
+    function setAdvice(mode, title, content, source="") {
+        if (!content) content = "等待分析結果...";
+
+        // 只有當新建議是 AI 介入且內容與上次不同時，才保存舊建議
+        if (mode === 'alert' && content !== currentDisplayedAdvice && currentDisplayedAdvice !== "" && !content.includes("分析中")) {
+            prevAdviceText.innerText = currentDisplayedAdvice;
+            historySec.style.display = "block";
+            // 更新歷史建議來源
+            document.querySelector('#history-section .history-label').innerText = `上一則 AI 建議 (${source || 'cached/ai'})`;
+        }
+        
+        // 更新當前顯示內容
+        if (mode === 'alert' || mode === 'processing' || mode === 'normal') currentDisplayedAdvice = content;
+        
+        adviceBox.className = "advice-box " + mode;
+        adviceLabel.innerText = title;
+        adviceText.innerText = content;
+        
+        // 警報狀態下的計時器
+        if (alertTimeout) clearTimeout(alertTimeout);
+        if (mode === 'alert' && !content.includes("分析中")) {
+            alertTimeout = setTimeout(() => {
+                // 警報解除後，切換回一般狀態
+                adviceBox.className = "advice-box normal";
+                adviceLabel.innerText = "💡 歷史建議";
+            }, 8000);
+        }
+    }
+
+    // 啟動/停止按鈕邏輯
+    function updateBtnState(state) {
+        if (state === 'running') {
+            actionBtn.innerHTML = `<span><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/></svg></span> 結束本次服務`;
+            actionBtn.classList.remove('loading');
+            actionBtn.classList.add('stop');
+            actionBtn.disabled = false;
+        } else if (state === 'loading') {
+            actionBtn.innerHTML = `<span><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg></span> 取得編號中...`;
+            actionBtn.classList.add('loading');
+            actionBtn.classList.remove('stop');
+            actionBtn.disabled = true;
+        } else { // idle
+            actionBtn.innerHTML = `<span><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg></span> 開始接待客人`;
+            actionBtn.classList.remove('loading', 'stop');
+            actionBtn.disabled = false;
+        }
+    }
+
+    actionBtn.onclick = () => {
+        if(!isRunning) {
+            updateBtnState('loading');
+            $.get('/get_new_session_id/')
+                .done(res => {
+                    activeId = res.session_id; 
+                    isRunning = true;
+                    
+                    startCam();
+                    send();
+                    timer = setInterval(send, 3000); // 3秒發送一次偵測請求
+                    
+                    updateBtnState('running');
+                    setAdvice("normal", "系統監控中", `偵測已啟動 (ID: ${activeId})`);
+                    
+                    // 重置 UI
+                    scoreVal.innerText = "50.0"; 
+                    scoreVal.className = "score-val mid";
+                    dominantEmotionBox.innerHTML = '<span style="color:#cbd5e1;">偵測中...</span>';
+                    trackBox.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="dot active"></div>';
+                    historySec.style.display = "none";
+                    currentDisplayedAdvice = "";
+                    document.getElementById('au-container').innerHTML = '<span class="au-tag">等待偵測...</span>';
+                })
+                .fail(() => {
+                     alert("無法取得編號，請確認已登入！");
+                     updateBtnState('idle');
+                });
+        } else {
+            // 停止服務
+            isRunning = false;
+            isSending = false;
+            isPolling = false;
+            activeId = null;
+            
+            if(timer) clearInterval(timer);
+            if(alertTimeout) clearTimeout(alertTimeout);
+            
+            updateBtnState('idle');
+            setAdvice("normal", "待機", "服務結束，請接待下一位。");
+            countdownDiv.innerText = "停止";
+            faceIdLabel.style.display = 'none';
+            scoreVal.innerText = "--";
+            scoreVal.className = "score-val";
+            dominantEmotionBox.innerHTML = '<span style="color:#cbd5e1;">(待機)</span>';
+        }
+    };
+
+    initMonitor();
+</script>
+</body>
+</html>

@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>情緒統計報表</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: "Microsoft JhengHei", sans-serif; background: #f8f9fa; padding: 20px; text-align: center; color: #333; }
+    
+    /* 搜尋區塊 */
+    .filter-section { 
+        background: #fff; padding: 1.5rem; border-radius: 12px; 
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05); margin-bottom: 20px; 
+        display: flex; gap: 15px; justify-content: center; align-items: center; flex-wrap: wrap;
+    }
+    input, select, button { padding: 10px 14px; font-size: 16px; border-radius: 8px; border: 1px solid #ddd; }
+    button { background: #007bff; color: #fff; border: none; cursor: pointer; font-weight: 600; }
+    button:hover { background: #0056b3; }
+    button:disabled { background: #ccc; cursor: not-allowed; }
+
+    /* 圖表區塊 */
+    #chartWrapper { 
+        position: relative; width: 100%; max-width: 1000px; height: 400px; 
+        margin: 0 auto 20px; background: #fff; border-radius: 12px; 
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08); padding: 20px; 
+    }
+    
+    /* 統計數據 */
+    #stats { font-size: 1.1rem; margin-bottom: 20px; color: #555; }
+    #stats span { font-weight: 700; color: #007bff; margin: 0 5px; }
+
+    /* AI 建議詳情區塊 */
+    #interventionBox { 
+        margin: 30px auto 0; max-width: 1000px; text-align: left; 
+        background: #fff; border-radius: 12px; padding: 20px; 
+        box-shadow: 0 4px 18px rgba(0,0,0,0.1); 
+        display: none; /* 預設隱藏 */
+        border-left: 5px solid #dc3545;
+    }
+    #interventionBox.active { display: block; animation: slideDown 0.3s ease-out; }
+    
+    .intervention-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+    .intervention-header h2 { margin: 0; font-size: 20px; color: #c92a2a; display: flex; align-items: center; gap: 8px; }
+    
+    #interventionList { list-style: none; padding: 0; margin: 0; }
+    #interventionList li { 
+        background: #fff5f5; padding: 10px 15px; margin-bottom: 8px; 
+        border-radius: 6px; border-left: 3px solid #ff6b6b; 
+        font-size: 16px; color: #333;
+    }
+    
+    .frame-info { margin-top: 15px; font-size: 14px; color: #666; background: #f8f9fa; padding: 10px; border-radius: 8px; }
+
+    @keyframes slideDown { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+    #message { margin-top: 10px; color: #dc3545; font-weight: 700; }
+  </style>
+</head>
+<body>
+
+  <h1>每日情緒與 AI 成效報表</h1>
+
+  <div class="filter-section">
+    <form id="filterForm" style="display:contents;">
+        <label for="date">選擇日期：</label>
+        <input type="date" id="date" name="date">
+        <button type="submit">查詢報表</button>
+    </form>
+    
+    <div style="margin-left: 20px;">
+        <label for="sessionSelect">檢視特定顧客：</label>
+        <select id="sessionSelect" disabled>
+          <option value="">(請先查詢日期)</option>
+        </select>
+    </div>
+  </div>
+
+  <div id="stats">
+    全日總平均分數：<span id="dailyAverage">--</span> | 
+    單顧客平均分數：<span id="sessionAverage">--</span>
+  </div>
+
+  <div id="chartWrapper">
+    <canvas id="emotionChart"></canvas>
+  </div>
+
+  <div id="interventionBox">
+    <div class="intervention-header">
+      <h2>AI 行銷建議與介入紀錄</h2>
+      <span id="interventionScore" style="font-weight:bold; color:#495057;"></span>
+    </div>
+    <ul id="interventionList"></ul>
+    <div id="frameDetails" class="frame-info"></div>
+  </div>
+
+  <div id="message"></div>
+
+  <script>
+    // [核心修改] 自定義插件：畫出垂直紅線與綠線
+    const interventionPlugin = {
+      id: 'interventionMarkers',
+      afterDatasetsDraw(chart) {
+        const events = chart.options.interventionMarkers?.events || [];
+        if (!events.length) return;
+        
+        const ctx = chart.ctx;
+        const xScale = chart.scales.x;
+        const chartArea = chart.chartArea;
+
+        events.forEach(event => {
+          // 找到時間點對應的 X 座標
+          const x = xScale.getPixelForValue(event.time);
+          if (isNaN(x)) return; // 如果時間點不在圖表範圍內，略過
+
+          ctx.save();
+          // 紅色 = 觸發 (low)，綠色 = 恢復 (recover)
+          ctx.strokeStyle = event.type === 'recover' ? '#2f9e44' : '#d7263d';
+          ctx.lineWidth = 2;
+          
+          // 畫垂直線
+          ctx.beginPath();
+          ctx.moveTo(x, chartArea.top);
+          ctx.lineTo(x, chartArea.bottom);
+          ctx.stroke();
+          
+          // 加個文字標記
+          ctx.fillStyle = event.type === 'recover' ? '#2f9e44' : '#d7263d';
+          ctx.font = '12px Arial';
+          ctx.textAlign = 'center';
+          ctx.fillText(event.type === 'recover' ? '恢復' : '介入', x, chartArea.top - 5);
+          
+          ctx.restore();
+        });
+      }
+    };
+    // 註冊插件
+    Chart.register(interventionPlugin);
+
+    const ctx = document.getElementById('emotionChart').getContext('2d');
+    let emotionChart = null;
+    let latestSessions = [];
+    let latestDailyAvg = null;
+    let interventionsBySession = {};
+    let markersBySession = {};
+
+    // 繪製圖表函式
+    function renderChart(points, markers = []) {
+      const labels = points.map(point => point.time);
+      const values = points.map(point => point.score);
+
+      if (emotionChart) emotionChart.destroy();
+
+      emotionChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            label: '累積滿意度', // 更新標籤名稱
+            data: values,
+            borderColor: '#17a2b8',
+            backgroundColor: 'rgba(23,162,184,0.2)',
+            borderWidth: 2,
+            pointRadius: 4,
+            pointBackgroundColor: '#0b7285',
+            tension: 0.2, // 曲線平滑度
+            fill: true,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            y: {
+              title: { display: true, text: '滿意度分數 (0-100)' },
+              min: 0, max: 100, ticks: { stepSize: 10 }
+            },
+            x: {
+              title: { display: true, text: '時間 (時:分:秒)' }
+            }
+          },
+          plugins: {
+            legend: { display: true, position: 'top' },
+            tooltip: { callbacks: { label: ctx => `累積滿意度：${ctx.parsed.y}` } }
+          },
+          // [關鍵] 將紅綠線資料傳入插件
+          interventionMarkers: { events: markers }
+        }
+      });
+    }
+
+    // 渲染下方詳細資料
+    function renderIntervention(sessionId) {
+      const interventionBox = document.getElementById("interventionBox");
+      const list = document.getElementById("interventionList");
+      const score = document.getElementById("interventionScore");
+      const frameDetails = document.getElementById("frameDetails");
+      
+      // 找出屬於該 sessionId 的所有介入紀錄
+      const sessionInterventions = (window.globalInterventions || []).filter(i => i.customer_id === sessionId);
+
+      if (sessionInterventions.length === 0) {
+        interventionBox.classList.remove("active");
+        return;
+      }
+
+      list.innerHTML = sessionInterventions.map((item, index) => `
+          <li>
+            <span style="font-size:0.8em; color:#666;">[${item.time}]</span> 
+            ${item.advice} 
+            <span style="font-size:0.8em; margin-left:10px;">(結果: ${item.result})</span>
+          </li>
+      `).join("");
+      
+      // 顯示最後一次的分數變化
+      const last = sessionInterventions[sessionInterventions.length - 1];
+      score.textContent = `最新成效：${last.score_before} ➝ ${last.score_after}`;
+      
+      frameDetails.textContent = `本顧客共觸發 ${sessionInterventions.length} 次 AI 建議`;
+      interventionBox.classList.add("active");
+    }
+
+    // 切換 Session (顧客)
+    function updateSessionInfo(sessionId) {
+      const session = latestSessions.find(item => item.customer_id === sessionId);
+      
+      // 如果選了 "全部" 或無效 ID
+      if (!session) {
+        if (emotionChart) emotionChart.destroy();
+        document.getElementById("sessionAverage").textContent = "--";
+        document.getElementById("dailyAverage").textContent = latestDailyAvg ? `${latestDailyAvg}` : "--";
+        document.getElementById("interventionBox").classList.remove("active");
+        return;
+      }
+
+      // 取得該 Session 的紅綠線標記
+      const markers = markersBySession[session.customer_id] || [];
+      
+      // 畫圖 (帶紅綠線)
+      renderChart(session.points, markers);
+      
+      // 更新文字
+      document.getElementById("sessionAverage").textContent = `${session.avg_score}`;
+      document.getElementById("dailyAverage").textContent = `${latestDailyAvg}`;
+      
+      // 顯示下方詳情
+      renderIntervention(session.customer_id);
+    }
+
+    // 下拉選單事件
+    document.getElementById("sessionSelect").addEventListener("change", (event) => {
+      updateSessionInfo(event.target.value);
+    });
+
+    // 查詢按鈕事件
+    document.getElementById("filterForm").addEventListener("submit", function(e) {
+      e.preventDefault();
+      const date = document.getElementById("date").value;
+      const messageDiv = document.getElementById("message");
+      const sessionSelect = document.getElementById("sessionSelect");
+
+      if (!date) {
+        messageDiv.textContent = "請選擇日期";
+        return;
+      }
+
+      messageDiv.textContent = "讀取中...";
+      sessionSelect.innerHTML = '<option value="">載入中...</option>';
+      sessionSelect.disabled = true;
+
+      fetch(`/report_data/?date=${date}`)
+        .then(res => res.json())
+        .then(res => {
+          if (res.status !== "ok") {
+            // 錯誤處理
+            messageDiv.textContent = res.message || "沒有符合條件的結果";
+            sessionSelect.innerHTML = '<option value="">沒有資料</option>';
+            if (emotionChart) emotionChart.destroy();
+            document.getElementById("interventionBox").classList.remove("active");
+            return;
+          }
+
+          // 儲存全域資料
+          latestSessions = res.sessions;
+          latestDailyAvg = res.daily_avg;
+          window.globalInterventions = res.interventions; // 存起來給 renderIntervention 用
+          
+          markersBySession = {};
+          latestSessions.forEach(session => {
+            markersBySession[session.customer_id] = session.markers || [];
+          });
+          
+          // --- [核心修改] 執行自然排序 (Natural Sort) ---
+          // 目標：讓 c2 排在 c10 前面
+          latestSessions.sort((a, b) => {
+              const idA = a.customer_id;
+              const idB = b.customer_id;
+              
+              // 嘗試拆解為「前綴」與「數字」
+              // 假設格式為 20251203c10 -> prefix: 20251203c, num: 10
+              const regex = /^(\d+c)(\d+)$/;
+              const matchA = idA.match(regex);
+              const matchB = idB.match(regex);
+
+              if (matchA && matchB) {
+                  // 如果前綴相同 (同一天)，比較數字大小
+                  if (matchA[1] === matchB[1]) {
+                      return parseInt(matchA[2]) - parseInt(matchB[2]);
+                  }
+                  // 如果前綴不同 (不同天)，比較前綴字串
+                  return matchA[1].localeCompare(matchB[1]);
+              }
+              
+              // 如果格式不符，退回普通字串排序
+              return idA.localeCompare(idB);
+          });
+          // -------------------------------------------
+
+          messageDiv.textContent = `已載入 ${date} 的 ${latestSessions.length} 位顧客紀錄。`;
+
+          if (!latestSessions.length) {
+            sessionSelect.innerHTML = '<option value="">沒有資料</option>';
+            return;
+          }
+
+          // 填充下拉選單
+          sessionSelect.disabled = false;
+          sessionSelect.innerHTML = latestSessions.map((session, index) => {
+            const label = `${session.customer_id} (滿意度: ${session.avg_score})`;
+            return `<option value="${session.customer_id}">${label}</option>`;
+          }).join("");
+
+          // 預設選取第一位顧客
+          updateSessionInfo(latestSessions[0].customer_id);
+        })
+        .catch(err => {
+          messageDiv.textContent = "讀取失敗：" + err.message;
+        });
+    });
+    
+    // 預設今天
+    document.getElementById('date').valueAsDate = new Date();
+  </script>
+</body>
+</html>
