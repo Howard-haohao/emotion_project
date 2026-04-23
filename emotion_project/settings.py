@@ -5,7 +5,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # 安全金鑰 (正式上線時建議改用環境變數)
-SECRET_KEY = 'django-insecure-e)-z=q!lop(x8*s8z0)(grwe&hw97t@0$dd&21+(*fgjgdn@i0'
+SECRET_KEY = 'XXX'
 
 # 除錯模式
 DEBUG = True
